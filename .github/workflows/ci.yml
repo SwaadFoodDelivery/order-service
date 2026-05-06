@@ -4,9 +4,15 @@ on:
   pull_request:
     branches:
       - main
+    paths-ignore:
+      - "**/.env"
+      - "**/.env.*"
   push:
     branches:
       - main
+    paths-ignore:
+      - "**/.env"
+      - "**/.env.*"
 
 permissions:
   contents: read
