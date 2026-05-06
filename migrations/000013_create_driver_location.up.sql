@@ -1,0 +1,2 @@
+CREATE TABLE driver_location_logs (log_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), partner_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE, order_id UUID, order_created_at TIMESTAMPTZ, latitude DECIMAL(9,6) NOT NULL, longitude DECIMAL(9,6) NOT NULL, recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), FOREIGN KEY(order_id,order_created_at) REFERENCES orders(order_id,created_at) ON DELETE SET NULL) PARTITION BY RANGE (recorded_at);
+CREATE TABLE driver_location_logs_default PARTITION OF driver_location_logs DEFAULT;

@@ -1,0 +1,10 @@
+.env
+.env.*
+!.env.sample
+!.env.development
+vendor/
+bin/
+*.test
+coverage.out
+*.pb.go
+.cache/
