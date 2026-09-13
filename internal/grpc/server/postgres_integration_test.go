@@ -113,6 +113,17 @@ func TestGetOrderPostgres(t *testing.T) {
 	if err := readerDB.Get(&current, "SELECT current_user"); err != nil || current != role {
 		t.Fatal("read-only role was not applied")
 	}
+	for _, table := range []string{"orders", "order_items", "payments"} {
+		for _, privilege := range []string{"SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE"} {
+			var allowed bool
+			if err := readerDB.Get(&allowed, "SELECT has_table_privilege(current_user,$1,$2)", table, privilege); err != nil {
+				t.Fatal(err)
+			}
+			if allowed != (privilege == "SELECT") {
+				t.Fatalf("reader role privilege %s on %s = %v", privilege, table, allowed)
+			}
+		}
+	}
 	if _, err := readerDB.Exec("UPDATE orders SET total_amount=0 WHERE false"); err == nil {
 		t.Fatal("reader connection permitted a write")
 	}
@@ -128,6 +139,24 @@ func TestGetOrderPostgres(t *testing.T) {
 	}
 	if len(out.Items) != 1 || out.Items[0].ItemNameSnapshot != "Stored snapshot, not current menu" || out.Items[0].ItemPriceSnapshotMinor != 5 {
 		t.Fatal("composite-key item isolation or exact money failed")
+	}
+	// A later same-ID order must not inherit the earlier successful payment.
+	// This catches dropping order_created_at from the correlated payment query.
+	newest := created.Add(2 * time.Second)
+	_, err = db.Exec("INSERT INTO orders(order_id,created_at,user_id,restaurant_id,status,subtotal,taxes,delivery_fee,total_amount,payment_method) VALUES($1,$2,$3,'10000000-0000-4000-8000-000000000001','pending_payment',15.05,0,0,15.05,'upi')", orderID, newest, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec("INSERT INTO payments(order_id,order_created_at,user_id,amount,status,idempotency_key,created_at) VALUES($1,$2,$3,15.05,'failed',$4,$5)", orderID, newest, owner, uuid.NewString(), newest.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest, err := client.GetOrder(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest.PaymentStatus != "failed" || latest.TotalAmountMinor != 1505 || latest.CreatedAt != newest.Format(time.RFC3339Nano) {
+		t.Fatal("successful payment from older composite order leaked")
 	}
 	request.OrderId = foreignID.String()
 	_, foreignErr := client.GetOrder(ctx, request)
