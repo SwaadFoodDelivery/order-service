@@ -54,3 +54,43 @@ jobs:
 
       - name: Docker Build
         run: docker build -t order-service:ci .
+
+  postgres-rpc-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgis/postgis:15-3.4
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: swaad_grpc_test_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d swaad_grpc_test_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout authoritative schema and seed at tested backend commit
+        uses: actions/checkout@v4
+        with:
+          repository: SwaadFoodDelivery/food-delivery-backend
+          ref: 31f210b26d54f23d2f6375c2167f1afbaa965514
+          path: .integration-backend
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: .integration-backend/go.mod
+          cache: true
+      - name: Apply backend migrations and fictional catalog
+        working-directory: .integration-backend
+        env:
+          MIGRATION_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/swaad_grpc_test_ci?sslmode=disable
+        run: go test ./infra/postgres -run '^TestMigrationsAndDemoSeed$' -count=1 -v
+      - name: Real service transport and SELECT-only PostgreSQL integration
+        env:
+          ORDER_RPC_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/swaad_grpc_test_ci?sslmode=disable
+        run: go test -race ./internal/grpc/server -run TestGetOrderPostgres -count=1 -v
