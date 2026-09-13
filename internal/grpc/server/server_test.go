@@ -244,11 +244,10 @@ func TestOtherRPCsAreUnimplemented(t *testing.T) {
 	}), time.Second, false)
 	ctx := authorized(context.Background())
 	_, place := client.PlaceOrder(ctx, &orderpb.PlaceOrderRequest{})
-	_, list := client.GetUserOrders(ctx, &orderpb.GetUserOrdersRequest{})
 	_, cancel := client.CancelOrder(ctx, &orderpb.CancelOrderRequest{})
 	_, update := client.UpdateOrderStatus(ctx, &orderpb.UpdateOrderStatusRequest{})
 	_, tracking := client.GetOrderTracking(ctx, &orderpb.GetOrderTrackingRequest{})
-	for _, err := range []error{place, list, cancel, update, tracking} {
+	for _, err := range []error{place, cancel, update, tracking} {
 		if status.Code(err) != codes.Unimplemented {
 			t.Errorf("got %v, want Unimplemented", err)
 		}
