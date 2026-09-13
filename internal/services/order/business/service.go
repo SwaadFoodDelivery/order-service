@@ -1,10 +1,16 @@
 package business
 
+import (
+	"context"
+	"errors"
+	"order-service/internal/services/order/models"
+)
+
+var (
+	ErrInvalidArgument  = errors.New("order_id and requester_user_id must be nonzero UUIDs")
+	ErrPermissionDenied = errors.New("only client order reads are supported")
+)
+
 type Service interface {
-	PlaceOrder() error
-	GetOrder() error
-	GetUserOrders() error
-	CancelOrder() error
-	UpdateOrderStatus() error
-	GetOrderTracking() error
+	GetOrder(ctx context.Context, orderID, requesterID, role string) (models.Order, error)
 }

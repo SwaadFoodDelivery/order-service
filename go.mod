@@ -5,7 +5,9 @@ go 1.22.0
 toolchain go1.24.5
 
 require (
+	github.com/SwaadFoodDelivery/proto v0.0.0-20260912173032-f946f9d3345e
 	github.com/golang-migrate/migrate/v4 v4.18.1
+	github.com/google/uuid v1.6.0
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/lib/pq v1.10.9
 	github.com/redis/go-redis/v9 v9.6.1

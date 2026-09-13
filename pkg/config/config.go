@@ -1,93 +1,113 @@
 package config
 
 import (
+	"fmt"
+	"net"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/spf13/viper"
 )
 
+const MaxRPCTimeout = 2 * time.Second
+
 type Config struct {
-	App struct {
-		Name     string
-		Env      string
-		Port     string
-		LogLevel string
-	}
+	App      struct{ Name, Env, Port, LogLevel string }
 	Postgres struct {
 		Host, Port, User, Password, DBName, SSLMode    string
 		MaxOpenConns, MaxIdleConns, ConnMaxLifetimeMin int
 	}
+	// Retained for the unused legacy infrastructure packages, not startup dependencies.
 	Redis struct {
 		Addr, Password              string
 		DB, PoolSize, ReadTimeoutMS int
 	}
 	Kafka struct {
-		Brokers          []string
-		ClientID         string
-		RequiredAcks     int
-		BatchSize        int
-		OrderEventsTopic string
+		Brokers                 []string
+		ClientID                string
+		RequiredAcks, BatchSize int
+		OrderEventsTopic        string
 	}
-	JWT struct {
-		Secret string
-	}
-	GRPC struct {
-		OrderAddr string
-	}
-	RateLimit struct {
-		DefaultPerMin int
-		WindowSec     int
+	JWT       struct{ Secret string }
+	RateLimit struct{ DefaultPerMin, WindowSec int }
+	GRPC      struct {
+		OrderAddr      string
+		ServiceKey     string
+		RequestTimeout time.Duration
 	}
 }
 
 func (c Config) RateWindow() time.Duration { return time.Duration(c.RateLimit.WindowSec) * time.Second }
 
+// Load deliberately does not auto-load .env.development: plaintext transport
+// requires an explicit environment selection by the operator.
 func Load() (*Config, error) {
-	viper.SetConfigFile(".env.development")
-	viper.SetConfigType("env")
-	viper.AutomaticEnv()
-	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-	_ = viper.ReadInConfig()
-	cfg := &Config{}
-	cfg.App.Name = viper.GetString("APP_NAME")
-	cfg.App.Env = viper.GetString("APP_ENV")
-	cfg.App.Port = viper.GetString("APP_PORT")
-	cfg.App.LogLevel = viper.GetString("LOG_LEVEL")
-	cfg.Postgres.Host = viper.GetString("POSTGRES_HOST")
-	cfg.Postgres.Port = viper.GetString("POSTGRES_PORT")
-	cfg.Postgres.User = viper.GetString("POSTGRES_USER")
-	cfg.Postgres.Password = viper.GetString("POSTGRES_PASSWORD")
-	cfg.Postgres.DBName = viper.GetString("POSTGRES_DB")
-	cfg.Postgres.SSLMode = viper.GetString("POSTGRES_SSLMODE")
-	cfg.Postgres.MaxOpenConns = viper.GetInt("POSTGRES_MAX_OPEN_CONNS")
-	cfg.Postgres.MaxIdleConns = viper.GetInt("POSTGRES_MAX_IDLE_CONNS")
-	cfg.Postgres.ConnMaxLifetimeMin = viper.GetInt("POSTGRES_CONN_MAX_LIFETIME_MIN")
-	cfg.Redis.Addr = viper.GetString("REDIS_ADDR")
-	cfg.Redis.Password = viper.GetString("REDIS_PASSWORD")
-	cfg.Redis.DB = viper.GetInt("REDIS_DB")
-	cfg.Redis.PoolSize = viper.GetInt("REDIS_POOL_SIZE")
-	cfg.Redis.ReadTimeoutMS = viper.GetInt("REDIS_READ_TIMEOUT_MS")
-	cfg.Kafka.Brokers = strings.Split(viper.GetString("KAFKA_BROKERS"), ",")
-	cfg.Kafka.ClientID = viper.GetString("KAFKA_CLIENT_ID")
-	cfg.Kafka.RequiredAcks = viper.GetInt("KAFKA_REQUIRED_ACKS")
-	cfg.Kafka.BatchSize = viper.GetInt("KAFKA_BATCH_SIZE")
-	cfg.Kafka.OrderEventsTopic = viper.GetString("KAFKA_ORDER_EVENTS_TOPIC")
-	cfg.JWT.Secret = viper.GetString("JWT_SECRET")
-	cfg.GRPC.OrderAddr = viper.GetString("ORDER_GRPC_ADDR_UNUSED")
-	cfg.RateLimit.DefaultPerMin = viper.GetInt("RATE_LIMIT_DEFAULT_PER_MIN")
-	cfg.RateLimit.WindowSec = viper.GetInt("RATE_LIMIT_WINDOW_SEC")
-	if cfg.App.Port == "" {
-		cfg.App.Port = "8080"
+	v := viper.New()
+	v.AutomaticEnv()
+	v.SetDefault("LOG_LEVEL", "info")
+	v.SetDefault("POSTGRES_PORT", "5432")
+	v.SetDefault("POSTGRES_SSLMODE", "require")
+	v.SetDefault("POSTGRES_MAX_OPEN_CONNS", 10)
+	v.SetDefault("POSTGRES_MAX_IDLE_CONNS", 5)
+	v.SetDefault("POSTGRES_CONN_MAX_LIFETIME_MIN", 5)
+	v.SetDefault("ORDER_GRPC_TIMEOUT_MS", 2000)
+	c := &Config{}
+	c.App.Name = v.GetString("APP_NAME")
+	c.App.Env = v.GetString("APP_ENV")
+	c.App.LogLevel = v.GetString("LOG_LEVEL")
+	c.Postgres.Host = v.GetString("POSTGRES_HOST")
+	c.Postgres.Port = v.GetString("POSTGRES_PORT")
+	c.Postgres.User = v.GetString("POSTGRES_USER")
+	c.Postgres.Password = v.GetString("POSTGRES_PASSWORD")
+	c.Postgres.DBName = v.GetString("POSTGRES_DB")
+	c.Postgres.SSLMode = v.GetString("POSTGRES_SSLMODE")
+	c.Postgres.MaxOpenConns = v.GetInt("POSTGRES_MAX_OPEN_CONNS")
+	c.Postgres.MaxIdleConns = v.GetInt("POSTGRES_MAX_IDLE_CONNS")
+	c.Postgres.ConnMaxLifetimeMin = v.GetInt("POSTGRES_CONN_MAX_LIFETIME_MIN")
+	c.GRPC.OrderAddr = v.GetString("ORDER_GRPC_ADDR")
+	c.GRPC.ServiceKey = v.GetString("ORDER_GRPC_SERVICE_KEY")
+	timeoutMS, err := strconv.ParseInt(v.GetString("ORDER_GRPC_TIMEOUT_MS"), 10, 64)
+	if err != nil || timeoutMS < 1 || timeoutMS > MaxRPCTimeout.Milliseconds() {
+		return nil, fmt.Errorf("ORDER_GRPC_TIMEOUT_MS must be between 1 and 2000")
 	}
-	if cfg.GRPC.OrderAddr == "" {
-		cfg.GRPC.OrderAddr = "localhost:50051"
+	c.GRPC.RequestTimeout = time.Duration(timeoutMS) * time.Millisecond
+	if err := c.ValidateRPC(); err != nil {
+		return nil, err
 	}
-	if cfg.RateLimit.DefaultPerMin == 0 {
-		cfg.RateLimit.DefaultPerMin = 60
+	if c.Postgres.Host == "" || c.Postgres.User == "" || c.Postgres.DBName == "" {
+		return nil, fmt.Errorf("POSTGRES_HOST, POSTGRES_USER, and POSTGRES_DB are required")
 	}
-	if cfg.RateLimit.WindowSec == 0 {
-		cfg.RateLimit.WindowSec = 60
+	if c.Postgres.MaxOpenConns < 1 || c.Postgres.MaxIdleConns < 0 ||
+		c.Postgres.MaxIdleConns > c.Postgres.MaxOpenConns || c.Postgres.ConnMaxLifetimeMin < 1 {
+		return nil, fmt.Errorf("invalid Postgres pool limits")
 	}
-	return cfg, nil
+	return c, nil
+}
+
+func (c *Config) ValidateRPC() error {
+	if c == nil {
+		return fmt.Errorf("configuration is required")
+	}
+	if c.App.Env != "development" && c.App.Env != "test" {
+		return fmt.Errorf("plaintext order RPC is restricted to explicit development/test; TLS is not implemented")
+	}
+	host, port, err := net.SplitHostPort(c.GRPC.OrderAddr)
+	ip := net.ParseIP(host)
+	p, portErr := strconv.Atoi(port)
+	if err != nil || ip == nil || !ip.IsLoopback() || portErr != nil || p < 1 || p > 65535 {
+		return fmt.Errorf("ORDER_GRPC_ADDR must be an explicit numeric loopback address and port")
+	}
+	if len(c.GRPC.ServiceKey) < 32 || strings.TrimSpace(c.GRPC.ServiceKey) != c.GRPC.ServiceKey {
+		return fmt.Errorf("ORDER_GRPC_SERVICE_KEY must contain at least 32 bytes without surrounding whitespace")
+	}
+	for _, b := range []byte(c.GRPC.ServiceKey) {
+		if b < 33 || b > 126 {
+			return fmt.Errorf("ORDER_GRPC_SERVICE_KEY must contain printable ASCII without spaces")
+		}
+	}
+	if c.GRPC.RequestTimeout <= 0 || c.GRPC.RequestTimeout > MaxRPCTimeout {
+		return fmt.Errorf("order RPC timeout must be positive and at most two seconds")
+	}
+	return nil
 }
