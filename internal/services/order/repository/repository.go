@@ -16,3 +16,8 @@ var (
 type Repository interface {
 	GetOrder(ctx context.Context, orderID, requesterID uuid.UUID) (models.Order, error)
 }
+
+// ListRepository is separate so existing GetOrder adapters need not implement it.
+type ListRepository interface {
+	ListForUser(ctx context.Context, requesterID uuid.UUID, fetchLimit int, before *models.OrderPosition) ([]models.OrderSummary, error)
+}

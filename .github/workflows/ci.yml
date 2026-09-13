@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - main
+      - codex/order-grpc-foundation
     paths-ignore:
       - "**/.env"
       - "**/.env.*"
@@ -93,4 +94,4 @@ jobs:
       - name: Real service transport and SELECT-only PostgreSQL integration
         env:
           ORDER_RPC_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/swaad_grpc_test_ci?sslmode=disable
-        run: go test -race ./internal/grpc/server -run TestGetOrderPostgres -count=1 -v
+        run: go test -race ./internal/grpc/server -run 'Test(GetOrder|GetUserOrders)Postgres' -count=1 -v
